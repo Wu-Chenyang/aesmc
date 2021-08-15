@@ -1,8 +1,8 @@
-from . import math
 from . import state
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 
 def infer(inference_algorithm, observations, initial, transition, emission,
@@ -129,7 +129,7 @@ def infer(inference_algorithm, observations, initial, transition, emission,
         if return_log_marginal_likelihood:
             temp = torch.logsumexp(torch.stack(log_weights, dim=0), dim=2) - \
                 np.log(num_particles)
-            log_marginal_likelihood = torch.sum(temp, dim=0)
+            log_marginal_likelihood = torch.mean(temp, dim=0)
         else:
             log_marginal_likelihood = None
 
@@ -205,7 +205,7 @@ def get_resampled_latents(latents, ancestral_indices):
     Returns: list of elements of the same type as latents
     """
 
-    assert(len(ancestral_indices) == len(latents) - 1)
+    # assert(len(ancestral_indices) == len(latents) - 1)
     if isinstance(latents[0], dict):
         temp_value = next(iter(latents[0].values()))
     else:
@@ -230,40 +230,24 @@ def get_resampled_latents(latents, ancestral_indices):
 
     return result
 
-
-def sample_ancestral_index(log_weight):
+def sample_ancestral_index(log_weight: torch.Tensor) -> torch.Tensor:
     """Sample ancestral index using systematic resampling.
+    Get from https://docs.pyro.ai/en/stable/_modules/pyro/infer/smcfilter.html#SMCFilter
 
     Args:
         log_weight: log of unnormalized weights, tensor
-            [batch_size, num_particles]
+            [batch_shape, num_particles]
     Returns:
-        zero-indexed ancestral index: LongTensor [batch_size, num_particles]
+        zero-indexed ancestral index: LongTensor [batch_shape, num_particles]
     """
-
     if torch.sum(log_weight != log_weight).item() != 0:
         raise FloatingPointError('log_weight contains nan element(s)')
-
-    batch_size, num_particles = log_weight.size()
-    indices = np.zeros([batch_size, num_particles])
-
-    uniforms = np.random.uniform(size=[batch_size, 1])
-    pos = (uniforms + np.arange(0, num_particles)) / num_particles
-
-    normalized_weights = math.exponentiate_and_normalize(
-        log_weight.detach().cpu().numpy(), dim=1)
-
-    # np.ndarray [batch_size, num_particles]
-    cumulative_weights = np.cumsum(normalized_weights, axis=1)
-
-    # hack to prevent numerical issues
-    cumulative_weights = cumulative_weights / np.max(
-        cumulative_weights, axis=1, keepdims=True)
-
-    for batch in range(batch_size):
-        indices[batch] = np.digitize(pos[batch], cumulative_weights[batch])
-
-    if log_weight.is_cuda:
-        return torch.from_numpy(indices).long().cuda()
-    else:
-        return torch.from_numpy(indices).long()
+    with torch.no_grad():
+        weights = F.softmax(log_weight.detach(), dim=1)
+        batch_shape, size = weights.shape[:-1], weights.size(-1)
+        n = weights.cumsum(-1).mul_(size).add_(torch.rand(batch_shape + (1,), device=weights.device))
+        n = n.floor_().long().clamp_(min=0, max=size)
+        diff = torch.zeros(batch_shape + (size + 1,), dtype=torch.long, device=weights.device)
+        diff.scatter_add_(-1, n, torch.tensor(1, device=weights.device, dtype=torch.long).expand_as(weights))
+        ancestors = diff[..., :-1].cumsum(-1).clamp_(min=0, max=size-1)
+    return ancestors

@@ -1,7 +1,7 @@
 from . import inference
-from . import math
 from . import state
 import torch
+import torch.nn.functional as F
 
 
 def empirical_expectation(value, log_weight, f):
@@ -22,7 +22,7 @@ def empirical_expectation(value, log_weight, f):
     """
 
     assert(value.size()[:2] == log_weight.size())
-    normalized_weights = math.exponentiate_and_normalize(log_weight, dim=1)
+    normalized_weights = F.softmax(log_weight, dim=1)
 
     # first particle
     f_temp = f(value[:, 0])

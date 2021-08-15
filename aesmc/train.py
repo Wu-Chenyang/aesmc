@@ -7,30 +7,16 @@ import torch.nn as nn
 import torch.utils.data
 
 
-def get_chained_params(*objects):
-    result = []
-    for object in objects:
-        if (object is not None) and isinstance(object, nn.Module):
-            result = itertools.chain(result, object.parameters())
-
-    if isinstance(result, list):
-        return None
-    else:
-        return result
-
-
 def train(dataloader, num_particles, algorithm, initial, transition, emission,
-          proposal, num_epochs, num_iterations_per_epoch=None,
-          optimizer_algorithm=torch.optim.Adam, optimizer_kwargs={},
-          callback=None):
-    parameters = get_chained_params(initial, transition, emission, proposal)
-    optimizer = optimizer_algorithm(parameters, **optimizer_kwargs)
+          proposal, num_epochs, optimizer, num_iterations_per_epoch=None,
+          callback=None, device=torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")):
     for epoch_idx in range(num_epochs):
         for epoch_iteration_idx, observations in enumerate(dataloader):
             if num_iterations_per_epoch is not None:
                 if epoch_iteration_idx == num_iterations_per_epoch:
                     break
             optimizer.zero_grad()
+            observations = [item.to(device) for item in observations]
             loss = losses.get_loss(observations, num_particles, algorithm,
                                    initial, transition, emission, proposal)
             loss.backward()

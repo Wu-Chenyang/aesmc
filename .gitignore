@@ -112,3 +112,6 @@ venv.bak/
 *.swp
 *.swo
 *.DS_Store
+
+battery/processed_data
+runs
